@@ -5492,9 +5492,14 @@
       const book = getBookByCode(slotInfo.code);
       const title = book ? sanitizeTitle(book.title) : `書號無效，請重新指定（${slotInfo.code}）`;
       
-      // 指定書箱：暖木色底色；隨機分配：柔和森林綠淡底色；均絕對無框線
+      // 管理員手動指定、教師選書匯入與隨機分派各自使用固定底色，便於辨識來源。
       const isSpecified = slotInfo.manualSpecified === true;
-      const cardBg = isSpecified ? 'bg-[#F5EFEA] hover:bg-[#EFE7DF]' : 'bg-[#EAF0EC] hover:bg-[#DDE7E0]';
+      const isTeacherSelection = slotInfo.selectionSource === 'teacher';
+      const cardBg = isSpecified
+        ? 'bg-[#F5EFEA] hover:bg-[#EFE7DF]'
+        : isTeacherSelection
+          ? 'bg-[#EAF0EC] hover:bg-[#DDE7E0]'
+          : 'bg-[#F2EFDB] hover:bg-[#E9E5CC]';
       
       const fromPlace = slotInfo.fromPlace || "圖書館";
       const toPlace = slotInfo.toPlace || "圖書館";
