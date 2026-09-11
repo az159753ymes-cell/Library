@@ -469,6 +469,30 @@
         object-fit: contain;
       }
 
+      .mobile-admin-save-button {
+        flex: 0 0 auto;
+        display: flex;
+        width: 88px;
+        min-height: 44px;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        border: 0;
+        border-radius: 10px;
+        background: transparent;
+      }
+
+      .mobile-admin-save-button:focus-visible {
+        outline: 3px solid rgba(140, 90, 60, .35);
+        outline-offset: 2px;
+      }
+
+      #mobile-app-header > .admin-logo-save-popover {
+        top: calc(100% + 12px);
+        left: 16px;
+        width: calc(100vw - 32px);
+      }
+
       .mobile-admin-nav {
         display: flex;
         min-width: 0;
@@ -1533,13 +1557,11 @@
           <img src="assets/library-wordmark-eucalyptus-brush-v4-600.webp" alt="LIBRARY；點擊儲存並更新教師端" class="library-wordmark" decoding="async" />
         </button>
         <section id="admin-save-popover" class="admin-logo-save-popover hidden" aria-live="polite" aria-label="儲存狀態">
-          <div class="flex items-start justify-between gap-3 border-b border-[#E7DDD0] px-5 py-4">
+          <div class="border-b border-[#E7DDD0] px-5 py-4">
             <div>
               <h2 id="admin-save-popover-title" class="text-lg font-extrabold text-[#2C5E43]">儲存目前資料</h2>
               <p id="admin-save-popover-status" class="mt-1 text-sm font-semibold text-[#52796F]">目前資料已儲存</p>
             </div>
-            <button id="admin-save-popover-close" type="button" onclick="closeAdminSavePopover()" aria-label="關閉儲存狀態"
-              class="rounded-lg px-2 py-1 text-2xl leading-none text-[#52796F] transition hover:bg-[#F5EFEA] hover:text-[#2C5E43]">×</button>
           </div>
           <div class="px-5 py-4">
             <p id="admin-save-popover-message" class="text-sm leading-6 text-[#52796F]"></p>
@@ -1618,13 +1640,16 @@
 
     <!-- 底部系統版本標示 -->
     <div class="p-4 text-xs text-[#5A786B] text-center font-medium">
-      圖書館系統 v4.1.58
+      圖書館系統 v4.1.59
     </div>
   </aside>
 
   <!-- 手機版頂部導覽：取代窄螢幕的固定左側欄。 -->
   <header id="mobile-app-header" class="hidden no-print" aria-label="手機版系統導覽">
-    <img src="assets/library-wordmark-eucalyptus-brush-v4-600.webp" alt="LIBRARY 圖書館" class="mobile-brand" decoding="async" />
+    <button id="mobile-admin-save-btn" type="button" onclick="openAdminSavePopover()" class="mobile-admin-save-button hidden" aria-label="儲存並更新教師端" title="儲存並更新教師端">
+      <img src="assets/library-wordmark-eucalyptus-brush-v4-600.webp" alt="LIBRARY；點擊儲存並更新教師端" class="mobile-brand" decoding="async" />
+    </button>
+    <img id="mobile-teacher-library-wordmark" src="assets/library-wordmark-eucalyptus-brush-v4-600.webp" alt="LIBRARY 圖書館" class="mobile-brand hidden" decoding="async" />
     <nav id="mobile-admin-nav" class="mobile-admin-nav hidden" aria-label="管理功能">
       <button id="mobile-tab-catalog-btn" type="button" onclick="switchTab('catalog')" class="mobile-nav-button">書箱清冊</button>
       <button id="mobile-tab-rotation-btn" type="button" onclick="switchTab('rotation')" class="mobile-nav-button">班際輪換</button>
@@ -2435,7 +2460,9 @@
       const teacherWordmark = document.getElementById('teacher-library-wordmark');
       const mobileHeader = document.getElementById('mobile-app-header');
       const mobileAdminNav = document.getElementById('mobile-admin-nav');
+      const mobileAdminSave = document.getElementById('mobile-admin-save-btn');
       const mobileTeacherStatus = document.getElementById('mobile-teacher-status');
+      const mobileTeacherWordmark = document.getElementById('mobile-teacher-library-wordmark');
       const mobileTeacherClass = document.getElementById('mobile-teacher-class');
       const mobileSignOut = document.getElementById('mobile-sign-out-btn');
       const appMain = document.getElementById('app-main');
@@ -2462,7 +2489,9 @@
       if (teacherWordmark) teacherWordmark.classList.toggle('hidden', isAdmin);
       if (mobileHeader) mobileHeader.classList.toggle('hidden', !currentUser);
       if (mobileAdminNav) mobileAdminNav.classList.toggle('hidden', !currentUser || !isAdmin);
+      if (mobileAdminSave) mobileAdminSave.classList.toggle('hidden', !currentUser || !isAdmin);
       if (mobileTeacherStatus) mobileTeacherStatus.classList.toggle('hidden', !currentUser || isAdmin);
+      if (mobileTeacherWordmark) mobileTeacherWordmark.classList.toggle('hidden', !currentUser || isAdmin);
       if (mobileSignOut) mobileSignOut.classList.toggle('hidden', !currentUser);
       if (mobileTeacherClass) mobileTeacherClass.textContent = teacherClassCode ? `（${teacherClassCode}書箱）` : '';
       if (appMain) appMain.classList.toggle('teacher-mobile-view', Boolean(currentUser) && !isAdmin);
@@ -2489,6 +2518,7 @@
       }
       const gear = document.getElementById('rotation-settings-gear-btn');
       if (gear) gear.classList.toggle('hidden', !isAdmin || currentActiveTab !== 'rotation');
+      syncAdminSavePopoverHost();
       updateCloudSyncStatusUi();
     }
 
@@ -2525,8 +2555,7 @@
       const errorBox = document.getElementById('admin-save-popover-error');
       const confirm = document.getElementById('admin-save-popover-confirm');
       const cancel = document.getElementById('admin-save-popover-cancel');
-      const close = document.getElementById('admin-save-popover-close');
-      if (!title || !status || !message || !confirm || !cancel || !close) return;
+      if (!title || !status || !message || !confirm || !cancel) return;
 
       const state = getCloudSyncState();
       const isSaving = cloudSyncStatus === 'syncing';
@@ -2545,8 +2574,6 @@
       confirm.classList.toggle('hidden', !hasPendingChanges || isSaving);
       cancel.textContent = hasPendingChanges && !isSaving ? '取消' : '關閉';
       cancel.disabled = isSaving;
-      close.disabled = isSaving;
-      close.classList.toggle('opacity-40', isSaving);
       if (error) {
         errorBox.textContent = getReadableCloudError(error);
         errorBox.classList.remove('hidden');
@@ -2558,10 +2585,21 @@
 
     function openAdminSavePopover() {
       if (!requireAdmin()) return;
+      syncAdminSavePopoverHost();
       const popover = document.getElementById('admin-save-popover');
       if (!popover) return;
       popover.classList.remove('hidden');
       renderAdminSavePopover();
+    }
+
+    function syncAdminSavePopoverHost() {
+      const popover = document.getElementById('admin-save-popover');
+      const desktopHost = document.getElementById('admin-logo-save-container');
+      const mobileHost = document.getElementById('mobile-app-header');
+      const useMobileHost = Boolean(currentUser) && isAdmin && window.matchMedia('(max-width: 760px)').matches;
+      const targetHost = useMobileHost ? mobileHost : desktopHost;
+      if (!popover || !targetHost || popover.parentElement === targetHost) return;
+      targetHost.appendChild(popover);
     }
 
     function closeAdminSavePopover() {
@@ -3931,6 +3969,11 @@
       enforceGlobalDisableAutocomplete();
       bindFullWidthToHalfWidthListeners();
       initializeSecureApp();
+    });
+
+    window.addEventListener('resize', () => {
+      if (!currentUser || !isAdmin) return;
+      syncAdminSavePopoverHost();
     });
 
     window.addEventListener('beforeunload', event => {
