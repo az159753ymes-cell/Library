@@ -413,6 +413,26 @@
       box-shadow: 0 16px 35px rgba(69, 55, 42, .20);
     }
 
+    /* 選書截止時，以兩個獨立標題呈現學期與截止狀態。 */
+    #selection-class-entry.selection-window-closed #selection-class-entry-title,
+    #selection-class-entry.selection-window-closed #selection-semester-hint {
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    #selection-class-entry.selection-window-closed #selection-class-entry-title {
+      font-size: clamp(1.5rem, 3vw, 2rem);
+      line-height: 1.45;
+    }
+
+    #selection-class-entry.selection-window-closed #selection-semester-hint {
+      margin-top: 0.75rem;
+      color: #2C5E43;
+      font-size: clamp(1.5rem, 3vw, 2rem);
+      font-weight: 800;
+      line-height: 1.45;
+    }
+
     @media (max-width: 760px) {
       .desktop-selection-summary {
         display: none !important;
@@ -555,6 +575,21 @@
 
       #selection-semester-hint {
         white-space: normal;
+      }
+
+      /* 選書截止時，兩段訊息各自置中，並在窄螢幕維持單行。 */
+      #selection-class-entry.selection-window-closed #selection-class-entry-title {
+        font-size: clamp(0.875rem, 4.2vw, 1.75rem);
+        line-height: 1.45;
+        white-space: nowrap;
+      }
+
+      #selection-class-entry.selection-window-closed #selection-semester-hint {
+        margin-top: 0.75rem;
+        font-size: clamp(1.15rem, 6vw, 2rem);
+        font-weight: 800;
+        line-height: 1.45;
+        white-space: nowrap;
       }
 
       #selection-schedule-table-wrapper {
@@ -4127,17 +4162,24 @@
       mobileCards.classList.toggle('hidden', !useMobileTeacherCards);
       const teacherWindowLoading = !isAdminOverview && !teacherSelectionWindowLoaded && !teacherSelectionWindowLoadError;
       const teacherWindowLoadFailed = !isAdminOverview && Boolean(teacherSelectionWindowLoadError);
-      const teacherWindowOpen = getTeacherSelectionWindowState() === 'open';
+      const teacherWindowState = getTeacherSelectionWindowState();
+      const teacherWindowOpen = teacherWindowState === 'open';
+      const teacherWindowClosed = teacherWindowState === 'closed';
       const showTeacherEntry = !isAdminOverview && !teacherClassCode;
       entry.classList.toggle('hidden', isAdminOverview || Boolean(teacherClassCode));
+      entry.classList.toggle('selection-window-closed', teacherWindowClosed);
       entryTitle.textContent = teacherWindowLoading
         ? '正在讀取教師選書時段⋯'
-        : (teacherWindowLoadFailed ? '暫時無法讀取開放時段' : (teacherWindowOpen ? '輸入班級' : getTeacherSelectionWindowMessage()));
+        : (teacherWindowLoadFailed
+          ? '暫時無法讀取開放時段'
+          : (teacherWindowClosed
+            ? `${getTeacherSemesterDisplayName()}「班級書箱」`
+            : (teacherWindowOpen ? '輸入班級' : getTeacherSelectionWindowMessage())));
       semesterHint.textContent = teacherWindowLoading
         ? '請稍候，正在連線至正式資料庫。'
         : (teacherWindowLoadFailed
           ? `${teacherSelectionWindowLoadError}若持續發生，請將此畫面截圖提供給管理者。`
-          : '進入115學年度第一學期書箱列表');
+          : (teacherWindowClosed ? '選書開放時段已截止' : '進入115學年度第一學期書箱列表'));
       entryControls.classList.toggle('hidden', !teacherWindowOpen || teacherWindowLoading || teacherWindowLoadFailed);
       makerCredit.classList.toggle('hidden', !showTeacherEntry || !useMobileTeacherCards || !teacherWindowOpen || teacherWindowLoading || teacherWindowLoadFailed);
       schedule.classList.toggle('hidden', !isAdminOverview && (!teacherClassCode || !teacherWindowOpen || teacherWindowLoading || teacherWindowLoadFailed));
