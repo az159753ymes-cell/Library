@@ -1640,7 +1640,7 @@
 
     <!-- 底部系統版本標示 -->
     <div class="p-4 text-xs text-[#5A786B] text-center font-medium">
-      圖書館系統 v4.1.59
+      圖書館系統 v4.1.61
     </div>
   </aside>
 
@@ -3555,6 +3555,21 @@
     let rotationSchedule = {};
     let grade8HistoryBooks = {}; // { "801": ["1", "2", "3", "4", "5", "6"] }
 
+    // 經管理者確認的單次歷史閱讀例外：115-1 的 812 班可在第一本重讀 68 號書箱。
+    // 其餘八年級班級、時段、書箱與學期仍嚴格套用七年級已讀書目防重複。
+    function isApprovedHistoryRepeat(className, slotKey, code) {
+      return currentSemester === '115-1'
+        && className === '812'
+        && slotKey === 'p1'
+        && String(code).trim() === '68';
+    }
+
+    function hasGrade8HistoryConflict(className, slotKey, code) {
+      if (!String(className).startsWith('8')) return false;
+      const history = (grade8HistoryBooks[className] || []).map(x => String(x).trim());
+      return history.includes(String(code).trim()) && !isApprovedHistoryRepeat(className, slotKey, code);
+    }
+
     // 預設班級數設定 (七年級 12 班，八年級 12 班 801~812/201~212)
     const DEFAULT_GRADE_COUNTS = { g7: 12, g8: 12, isConfigured: true };
 
@@ -5154,31 +5169,43 @@
       return true;
     }
 
-    // 依據「實體書籍順移對接原則」推導移交起訖地點與日期（無法順移至下個班級時自動回圖書館，下個班級書籍來源亦為圖書館）
-    function recomputeChainFlow(grade) {
-      const classes = getClassesForGrade(grade);
-      const N = classes.length;
-      if (N === 0) return;
+    // 依書箱編號建立全校三個時段的實際旅程索引。同一時段的撞書會由全域驗證攔下，
+    // 因此每本書在下一時段至多只有一個明確接收班級。
+    function buildGlobalBookRouteIndex() {
+      const index = { p1: new Map(), p2: new Map(), p3: new Map() };
+      [...getClassesForGrade('7'), ...getClassesForGrade('8')].forEach(className => {
+        const schedule = rotationSchedule[className] || {};
+        ['p1', 'p2', 'p3'].forEach(slotKey => {
+          const item = schedule[slotKey];
+          if (item && item.code && String(item.code).trim() !== '') {
+            index[slotKey].set(String(item.code).trim(), className);
+          }
+        });
+      });
+      return index;
+    }
+
+    // 依據「實體書籍接力原則」推導移交起訖地點與日期。
+    // 只要同一本書出現在緊接的下一時段，就直接移交到實際接收班級；班序與年級不構成限制。
+    function recomputeChainFlow() {
+      const classes = [...getClassesForGrade('7'), ...getClassesForGrade('8')];
+      if (classes.length === 0) return;
 
       const dateEx1 = formatDateShort(rotationDates.exchange1Date);
       const dateEx2 = formatDateShort(rotationDates.exchange2Date);
       const dateReturn = formatDateShort(rotationDates.returnDate);
 
-      // 第一步：確保各班結構存在
+      // 第一步：確保各班結構存在，並建立全校書箱接力索引。
       classes.forEach(c => {
         if (!rotationSchedule[c]) {
           rotationSchedule[c] = { p1: null, p2: null, p3: null };
         }
       });
+      const routeIndex = buildGlobalBookRouteIndex();
 
-      // 第二步：依據真實前後時段書籍是否相同，精準計算起訖地點與日期
-      classes.forEach((c, idx) => {
-        const prevClass = classes[(idx - 1 + N) % N];
-        const nextClass = classes[(idx + 1) % N];
-
+      // 第二步：依據真實前後時段是否為同一本書，精準計算起訖地點與日期。
+      classes.forEach(c => {
         const schedSelf = rotationSchedule[c] || {};
-        const schedPrev = rotationSchedule[prevClass] || {};
-        const schedNext = rotationSchedule[nextClass] || {};
 
         // 1. 第一本 (p1)
         const itemP1 = schedSelf.p1;
@@ -5187,13 +5214,8 @@
           itemP1.fromPlace = "圖書館";
           itemP1.dueDate = dateEx1;
 
-          // 檢查下一班在第二本是否剛好是這本書
-          const nextHasSameP2 = (schedNext.p2 && schedNext.p2.code && String(schedNext.p2.code).trim() === code1);
-          if (nextHasSameP2) {
-            itemP1.toPlace = nextClass + '班';
-          } else {
-            itemP1.toPlace = "圖書館";
-          }
+          const receiver = routeIndex.p2.get(code1);
+          itemP1.toPlace = receiver ? receiver + '班' : "圖書館";
         }
 
         // 2. 第二本 (p2)
@@ -5202,21 +5224,10 @@
           const code2 = String(itemP2.code).trim();
           itemP2.dueDate = dateEx2;
 
-          // 檢查上一班在第一本是否剛好是這本書
-          const prevHasSameP1 = (schedPrev.p1 && schedPrev.p1.code && String(schedPrev.p1.code).trim() === code2);
-          if (prevHasSameP1) {
-            itemP2.fromPlace = prevClass + '班';
-          } else {
-            itemP2.fromPlace = "圖書館";
-          }
-
-          // 檢查下一班在第三本是否剛好是這本書
-          const nextHasSameP3 = (schedNext.p3 && schedNext.p3.code && String(schedNext.p3.code).trim() === code2);
-          if (nextHasSameP3) {
-            itemP2.toPlace = nextClass + '班';
-          } else {
-            itemP2.toPlace = "圖書館";
-          }
+          const sender = routeIndex.p1.get(code2);
+          const receiver = routeIndex.p3.get(code2);
+          itemP2.fromPlace = sender ? sender + '班' : "圖書館";
+          itemP2.toPlace = receiver ? receiver + '班' : "圖書館";
         }
 
         // 3. 第三本 (p3)
@@ -5226,13 +5237,8 @@
           itemP3.dueDate = dateReturn;
           itemP3.toPlace = "圖書館";
 
-          // 檢查上一班在第二本是否剛好是這本書
-          const prevHasSameP2 = (schedPrev.p2 && schedPrev.p2.code && String(schedPrev.p2.code).trim() === code3);
-          if (prevHasSameP2) {
-            itemP3.fromPlace = prevClass + '班';
-          } else {
-            itemP3.fromPlace = "圖書館";
-          }
+          const sender = routeIndex.p2.get(code3);
+          itemP3.fromPlace = sender ? sender + '班' : "圖書館";
         }
       });
 
@@ -5292,6 +5298,7 @@
       const currentSpecified = {}; // { '801_p1': '5', ... }
       const slotOccupiedBooks = { p1: new Set(), p2: new Set(), p3: new Set() };
       const classOccupiedBooks = {}; // { '801': Set(['5', ...]) }
+      const reusableLibrarySlots = { p2: [], p3: [] };
 
       [...classes7, ...classes8].forEach(c => {
         classOccupiedBooks[c] = new Set();
@@ -5312,6 +5319,10 @@
               ...(item.selectionSource ? { selectionSource: item.selectionSource } : {})
             };
           } else {
+            // 記住原本由圖書館發書的自動格位，優先將它們重排為完整接力，避免多餘回館。
+            if (item && item.code && reusableLibrarySlots[slotKey] && item.fromPlace === '圖書館') {
+              reusableLibrarySlots[slotKey].push(c);
+            }
             rotationSchedule[c][slotKey] = null;
           }
         });
@@ -5341,6 +5352,76 @@
         }
       }
 
+      // 指定書籍優先建立完整接力：先嘗試正常下一班；若該格已鎖定，
+      // 改用原本由圖書館發書的自動格位，最後才尋找其他可調整格位。
+      // 這讓 806 第一本文本可接到 805 第二本，再接到 809 第三本這類實體移交成立。
+      const specifiedBySlot = { p1: new Map(), p2: new Map(), p3: new Map() };
+      Object.entries(currentSpecified).forEach(([slotId, code]) => {
+        const separator = slotId.lastIndexOf('_');
+        const className = slotId.slice(0, separator);
+        const slotKey = slotId.slice(separator + 1);
+        specifiedBySlot[slotKey].set(code, className);
+      });
+
+      const isSafeChainTarget = (className, slotKey, code) => {
+        if (!rotationSchedule[className] || rotationSchedule[className][slotKey]) return false;
+        if (slotOccupiedBooks[slotKey].has(code) || classOccupiedBooks[className].has(code)) return false;
+        if (hasGrade8HistoryConflict(className, slotKey, code)) return false;
+        return true;
+      };
+
+      const orderedChainCandidates = (sourceClass, slotKey) => {
+        const sourceGradeClasses = sourceClass.startsWith('7') ? classes7 : classes8;
+        const sourceIndex = sourceGradeClasses.indexOf(sourceClass);
+        const preferredClass = sourceIndex >= 0 ? sourceGradeClasses[(sourceIndex + 1) % sourceGradeClasses.length] : null;
+        return [
+          preferredClass,
+          ...reusableLibrarySlots[slotKey],
+          ...sourceGradeClasses,
+          ...classes7,
+          ...classes8
+        ].filter((className, index, list) => className && list.indexOf(className) === index);
+      };
+
+      const findClassWithBook = (slotKey, code) => {
+        return [...classes7, ...classes8].find(className => {
+          const item = rotationSchedule[className]?.[slotKey];
+          return item && String(item.code).trim() === code;
+        }) || null;
+      };
+
+      const addChainTarget = (sourceClass, slotKey, code) => {
+        const existingClass = findClassWithBook(slotKey, code);
+        if (existingClass) return existingClass;
+        const targetClass = orderedChainCandidates(sourceClass, slotKey)
+          .find(className => isSafeChainTarget(className, slotKey, code));
+        if (!targetClass) return null;
+        rotationSchedule[targetClass][slotKey] = { code, isSpecified: false, chainBridge: true };
+        slotOccupiedBooks[slotKey].add(code);
+        classOccupiedBooks[targetClass].add(code);
+        return targetClass;
+      };
+
+      for (const [code, sourceClass] of specifiedBySlot.p1) {
+        const secondClass = addChainTarget(sourceClass, 'p2', code);
+        const thirdClass = secondClass && addChainTarget(secondClass, 'p3', code);
+        if (!secondClass || !thirdClass) {
+          const book = getBookByCode(code);
+          const title = book ? sanitizeTitle(book.title) : `編號${code}`;
+          alert(`⚠️ 無法補齊指定書籍的連續旅程：\n\n《${title}》已指定在【${sourceClass}班】的第一本，但找不到可調整的後續班級完成第二本與第三本接力。\n\n請先調整指定書籍後，再按「隨機」。`);
+          return false;
+        }
+      }
+
+      for (const [code, sourceClass] of specifiedBySlot.p2) {
+        if (!addChainTarget(sourceClass, 'p3', code)) {
+          const book = getBookByCode(code);
+          const title = book ? sanitizeTitle(book.title) : `編號${code}`;
+          alert(`⚠️ 無法補齊指定書籍的連續旅程：\n\n《${title}》已指定在【${sourceClass}班】的第二本，但找不到可調整的第三本接力班級。\n\n請先調整指定書籍後，再按「隨機」。`);
+          return false;
+        }
+      }
+
       // 2. 第一優先階段：將有指定書籍的輪換動線進行相鄰順向/逆向自動串聯（即使鏈上有多本不同指定書籍，亦優先對接相鄰階段）
       // (A) 八年級指定書籍優先對接
       for (let g = 0; g < N8; g++) {
@@ -5354,8 +5435,7 @@
 
         // 規則 1：若第二本 (p2) 已指定，且第一本 (p1) 未指定 -> 優先讓 p1 接手 p2 的書籍（逆向對接）
         if (spec2 && (!rotationSchedule[c1].p1 || !rotationSchedule[c1].p1.code)) {
-          const hist1 = (grade8HistoryBooks[c1] || []).map(x => String(x).trim());
-          if (!hist1.includes(spec2) && !slotOccupiedBooks.p1.has(spec2) && !classOccupiedBooks[c1].has(spec2)) {
+          if (!hasGrade8HistoryConflict(c1, 'p1', spec2) && !slotOccupiedBooks.p1.has(spec2) && !classOccupiedBooks[c1].has(spec2)) {
             rotationSchedule[c1].p1 = { code: spec2, isSpecified: false };
             slotOccupiedBooks.p1.add(spec2);
             classOccupiedBooks[c1].add(spec2);
@@ -5365,8 +5445,7 @@
         // 規則 2：若第一本 (p1) 有書（已指定或剛逆向對接），且第二本 (p2) 未指定 -> 優先讓 p2 接手 p1 的書籍（順向對接）
         const p1Book = rotationSchedule[c1].p1 ? rotationSchedule[c1].p1.code : null;
         if (p1Book && (!rotationSchedule[c2].p2 || !rotationSchedule[c2].p2.code)) {
-          const hist2 = (grade8HistoryBooks[c2] || []).map(x => String(x).trim());
-          if (!hist2.includes(p1Book) && !slotOccupiedBooks.p2.has(p1Book) && !classOccupiedBooks[c2].has(p1Book)) {
+          if (!hasGrade8HistoryConflict(c2, 'p2', p1Book) && !slotOccupiedBooks.p2.has(p1Book) && !classOccupiedBooks[c2].has(p1Book)) {
             rotationSchedule[c2].p2 = { code: p1Book, isSpecified: false };
             slotOccupiedBooks.p2.add(p1Book);
             classOccupiedBooks[c2].add(p1Book);
@@ -5376,8 +5455,7 @@
         // 規則 3：若第二本 (p2) 有書，且第三本 (p3) 未指定 -> 優先讓 p3 接手 p2 的書籍（順向對接）
         const p2Book = rotationSchedule[c2].p2 ? rotationSchedule[c2].p2.code : null;
         if (p2Book && (!rotationSchedule[c3].p3 || !rotationSchedule[c3].p3.code)) {
-          const hist3 = (grade8HistoryBooks[c3] || []).map(x => String(x).trim());
-          if (!hist3.includes(p2Book) && !slotOccupiedBooks.p3.has(p2Book) && !classOccupiedBooks[c3].has(p2Book)) {
+          if (!hasGrade8HistoryConflict(c3, 'p3', p2Book) && !slotOccupiedBooks.p3.has(p2Book) && !classOccupiedBooks[c3].has(p2Book)) {
             rotationSchedule[c3].p3 = { code: p2Book, isSpecified: false };
             slotOccupiedBooks.p3.add(p2Book);
             classOccupiedBooks[c3].add(p2Book);
@@ -5386,16 +5464,14 @@
 
         // 規則 4：若第三本 (p3) 已指定，且第二本 (p2) 仍未指定 -> 讓 p2 接手 p3 的書籍（逆向對接）
         if (spec3 && (!rotationSchedule[c2].p2 || !rotationSchedule[c2].p2.code)) {
-          const hist2 = (grade8HistoryBooks[c2] || []).map(x => String(x).trim());
-          if (!hist2.includes(spec3) && !slotOccupiedBooks.p2.has(spec3) && !classOccupiedBooks[c2].has(spec3)) {
+          if (!hasGrade8HistoryConflict(c2, 'p2', spec3) && !slotOccupiedBooks.p2.has(spec3) && !classOccupiedBooks[c2].has(spec3)) {
             rotationSchedule[c2].p2 = { code: spec3, isSpecified: false };
             slotOccupiedBooks.p2.add(spec3);
             classOccupiedBooks[c2].add(spec3);
 
             // 若 p1 也未指定，順便讓 p1 也接手 p3 的書籍
             if (!rotationSchedule[c1].p1 || !rotationSchedule[c1].p1.code) {
-              const hist1 = (grade8HistoryBooks[c1] || []).map(x => String(x).trim());
-              if (!hist1.includes(spec3) && !slotOccupiedBooks.p1.has(spec3) && !classOccupiedBooks[c1].has(spec3)) {
+              if (!hasGrade8HistoryConflict(c1, 'p1', spec3) && !slotOccupiedBooks.p1.has(spec3) && !classOccupiedBooks[c1].has(spec3)) {
                 rotationSchedule[c1].p1 = { code: spec3, isSpecified: false };
                 slotOccupiedBooks.p1.add(spec3);
                 classOccupiedBooks[c1].add(spec3);
@@ -5450,10 +5526,9 @@
             if (classOccupiedBooks[c2].has(codeStr)) return false;
             if (classOccupiedBooks[c3].has(codeStr)) return false;
 
-            for (const vc of [c1, c2, c3]) {
-              const history = (grade8HistoryBooks[vc] || []).map(x => String(x).trim());
-              if (history.includes(codeStr)) return false;
-            }
+            if (hasGrade8HistoryConflict(c1, 'p1', codeStr)) return false;
+            if (hasGrade8HistoryConflict(c2, 'p2', codeStr)) return false;
+            if (hasGrade8HistoryConflict(c3, 'p3', codeStr)) return false;
             return true;
           });
 
@@ -5519,10 +5594,7 @@
               const codeStr = String(b.code).trim();
               if (slotOccupiedBooks[slotKey].has(codeStr)) return false;
               if (classOccupiedBooks[c].has(codeStr)) return false;
-              if (grade === '8') {
-                const history = (grade8HistoryBooks[c] || []).map(x => String(x).trim());
-                if (history.includes(codeStr)) return false;
-              }
+              if (grade === '8' && hasGrade8HistoryConflict(c, slotKey, codeStr)) return false;
               return true;
             });
 
@@ -5543,9 +5615,8 @@
         alert(`⚠️ 運算防護警報：${finalCheckError}`);
       }
 
-      // 6. 計算物理順移起訖地點與移交日期
-      recomputeChainFlow('7');
-      recomputeChainFlow('8');
+      // 6. 依全校書箱實際旅程計算起訖地點與移交日期
+      recomputeChainFlow();
 
       saveRotationDataToStorage();
       return true;
@@ -6121,8 +6192,9 @@
         }
 
         // 4. 防呆 C：八年級班級在一年級（七年級）時是否已閱讀過此書箱（跨學年歷史防重複）
-        const histList = (grade8HistoryBooks[className] || grade8HistoryBooks[className.replace(/^2/, '8')] || []).map(x => String(x).trim());
-        if (histList.includes(codeVal)) {
+        const historyClassName = grade8HistoryBooks[className] ? className : className.replace(/^2/, '8');
+        const histList = (grade8HistoryBooks[historyClassName] || []).map(x => String(x).trim());
+        if (histList.includes(codeVal) && !isApprovedHistoryRepeat(historyClassName, slotKey, codeVal)) {
           notifyError(`⚠️《${bookTitle}》【${className}班】在一年級時已閱讀過`);
           return;
         }
@@ -6185,79 +6257,44 @@
       renderRotationTable();
     }
 
-    // 檢查全校（七八年級）輪換移交動線中是否存在非常規流動（因指定書籍引發之非順移移交）
+    // 檢查全校書箱實際旅程是否與畫面中的來源、去向一致。
+    // 跨班序與跨年級只要是同一本書在相鄰時段接手，即屬正常移交。
     function checkRotationFlowIssues() {
       const issues = [];
+      const routeIndex = buildGlobalBookRouteIndex();
+      const slotNames = { p1: '第一本', p2: '第二本', p3: '第三本' };
 
-      ['7', '8'].forEach(grade => {
-        const classes = getClassesForGrade(grade);
-        const N = classes.length;
-        if (N === 0) return;
+      [...getClassesForGrade('7'), ...getClassesForGrade('8')].forEach(className => {
+        const schedule = rotationSchedule[className] || {};
+        ['p1', 'p2', 'p3'].forEach(slotKey => {
+          const item = schedule[slotKey];
+          if (!item || !item.code || String(item.code).trim() === '') return;
 
-        const activeSlots = (grade === '7') ? ['p2', 'p3'] : ['p1', 'p2', 'p3'];
-        const slotNames = { p1: '第一本', p2: '第二本', p3: '第三本' };
+          const code = String(item.code).trim();
+          const book = getBookByCode(code);
+          const bookTitle = book ? sanitizeTitle(book.title) : `編號${code}`;
+          const expectedFrom = slotKey === 'p1'
+            ? '圖書館'
+            : ((slotKey === 'p2' ? routeIndex.p1 : routeIndex.p2).get(code) || '圖書館') + (((slotKey === 'p2' ? routeIndex.p1 : routeIndex.p2).has(code)) ? '班' : '');
+          const expectedTo = slotKey === 'p3'
+            ? '圖書館'
+            : ((slotKey === 'p1' ? routeIndex.p2 : routeIndex.p3).get(code) || '圖書館') + (((slotKey === 'p1' ? routeIndex.p2 : routeIndex.p3).has(code)) ? '班' : '');
+          const actualFrom = item.fromPlace || '圖書館';
+          const actualTo = item.toPlace || '圖書館';
 
-        classes.forEach((c, i) => {
-          const prevC = classes[(i - 1 + N) % N] + '班';
-          const nextC = classes[(i + 1) % N] + '班';
-          const sched = rotationSchedule[c] || {};
-
-          activeSlots.forEach(slotKey => {
-            const item = sched[slotKey];
-            if (item && item.code && String(item.code).trim() !== '') {
-              const book = getBookByCode(item.code);
-              const bookTitle = book ? sanitizeTitle(book.title) : `編號${item.code}`;
-              
-              let expectedFrom = "圖書館";
-              let expectedTo = "圖書館";
-
-              if (grade === '8') {
-                if (slotKey === 'p1') {
-                  expectedFrom = "圖書館";
-                  expectedTo = nextC;
-                } else if (slotKey === 'p2') {
-                  expectedFrom = prevC;
-                  expectedTo = nextC;
-                } else if (slotKey === 'p3') {
-                  expectedFrom = prevC;
-                  expectedTo = "圖書館";
-                }
-              } else { // 7年級
-                if (slotKey === 'p2') {
-                  expectedFrom = "圖書館";
-                  expectedTo = nextC;
-                } else if (slotKey === 'p3') {
-                  expectedFrom = prevC;
-                  expectedTo = "圖書館";
-                }
-              }
-
-              const actualFrom = item.fromPlace || "圖書館";
-              const actualTo = item.toPlace || "圖書館";
-
-              const hasFromMismatch = (actualFrom !== expectedFrom);
-              const hasToMismatch = (actualTo !== expectedTo);
-
-              if (hasFromMismatch || hasToMismatch) {
-                const details = [];
-                if (hasFromMismatch) {
-                  details.push(`來源：【${actualFrom}】（常規應為【${expectedFrom}】）`);
-                }
-                if (hasToMismatch) {
-                  details.push(`去向：【${actualTo}】（常規應為【${expectedTo}】）`);
-                }
-
-                issues.push({
-                  grade,
-                  className: c,
-                  slotKey,
-                  slotName: slotNames[slotKey],
-                  bookTitle,
-                  details: details.join('； ')
-                });
-              }
-            }
-          });
+          if (actualFrom !== expectedFrom || actualTo !== expectedTo) {
+            const details = [];
+            if (actualFrom !== expectedFrom) details.push(`來源：【${actualFrom}】（應為【${expectedFrom}】）`);
+            if (actualTo !== expectedTo) details.push(`去向：【${actualTo}】（應為【${expectedTo}】）`);
+            issues.push({
+              grade: className.startsWith('7') ? '7' : '8',
+              className,
+              slotKey,
+              slotName: slotNames[slotKey],
+              bookTitle,
+              details: details.join('； ')
+            });
+          }
         });
       });
 
@@ -6287,7 +6324,7 @@
           `${idx + 1}. ${item.grade}年級 ${item.className}班【${item.slotName}】《${item.bookTitle}》\n   └─ ${item.details}`
         ).join('\n\n');
 
-        alert(`⚠️ 班際輪換移交路徑提示：\n\n受手動指定書籍影響，共有 ${issues.length} 個階段儲存格無法依常規物理順移方式移交：\n\n${issueLines}\n\n系統已自動於表格雙行說明卡片中更正實際起訖地點，請留意以上班級之移交動線！`);
+        alert(`⚠️ 班際輪換移交路徑提示：\n\n共有 ${issues.length} 個儲存格的來源或去向尚未與實際書箱旅程一致：\n\n${issueLines}\n\n系統已依同一本書在相鄰時段的實際接收班級重新計算動線。`);
       } else {
         alert('✓ 班際輪換動線運算完成！七八年級全數書籍皆符合常規順移流動！');
       }
