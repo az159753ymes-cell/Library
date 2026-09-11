@@ -31,7 +31,15 @@ try {
     Where-Object { $_.Name -notin $excludedNames } |
     ForEach-Object { Copy-Item -LiteralPath $_.FullName -Destination $stagingPath -Recurse -Force }
 
-  $gitRevision = git -C $projectRoot rev-parse HEAD 2>$null
+  # 專案副本可能尚未包含 .git；備份仍須可完成，不能因 Git 查詢的 stderr 被嚴格錯誤設定中斷。
+  $previousErrorActionPreference = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    $gitRevision = (& git -C $projectRoot rev-parse HEAD 2>$null)
+  }
+  finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
   if (-not $gitRevision) { $gitRevision = '無法取得 Git 提交資訊' }
 
   @(

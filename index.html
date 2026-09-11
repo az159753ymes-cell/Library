@@ -1618,7 +1618,7 @@
 
     <!-- 底部系統版本標示 -->
     <div class="p-4 text-xs text-[#5A786B] text-center font-medium">
-      圖書館系統 v4.1.57
+      圖書館系統 v4.1.58
     </div>
   </aside>
 
@@ -2598,6 +2598,14 @@
 
     function isG7P1LibraryOrientation(className, slotKey, semesterId = currentSemester) {
       return isFirstSemester(semesterId) && String(className).startsWith('7') && slotKey === 'p1';
+    }
+
+    function isFixedTeacherOrientationPeriod(classCode, periodKey, semesterId = currentSemester) {
+      return isG7P1LibraryOrientation(classCode, periodKey, semesterId);
+    }
+
+    function getFixedTeacherOrientationLabel() {
+      return '參觀圖書館＆新生齊步走';
     }
 
     function getTeacherSelectionWindow(semesterId = getTeacherSelectionSemesterId()) {
@@ -4108,7 +4116,9 @@
     async function preloadTeacherClassSelectionRecords(classCode) {
       if (isAdmin || !cloudReady || !firestoreDb || String(classCode) !== String(teacherClassCode)) return;
       const requestId = ++teacherClassSelectionPrefetchId;
-      const periods = getSelectionPeriods().filter(period => /^p[1-3]$/.test(String(period.key || '')));
+      const periods = getSelectionPeriods().filter(period =>
+        /^p[1-3]$/.test(String(period.key || '')) && !isFixedTeacherOrientationPeriod(classCode, period.key)
+      );
       try {
         // 不等全學期選書監聽回傳，先平行讀取本班3個時段的固定索引文件。
         const snapshots = await Promise.all(periods.map(period =>
@@ -4208,6 +4218,10 @@
 
       list.innerHTML = booksData.map(book => {
         const cells = periods.map(period => {
+          const isFixedOrientation = !isAdminOverview && isFixedTeacherOrientationPeriod(teacherClassCode, period.key);
+          if (isFixedOrientation) {
+            return '<td class="border-t border-[#E8E1D5] bg-white px-4 py-4"></td>';
+          }
           if (!isBookBorrowable(book)) return '<td class="border-t border-[#E8E1D5] bg-white px-4 py-4"></td>';
           if (!period.start || !period.end) return '<td class="border-t border-[#E8E1D5] bg-white px-4 py-4 text-center text-base lg:text-lg font-extrabold text-[#8C5A3C]">時段未設定</td>';
           const selection = selectionRecords[getSelectionId(book.code, period.key)];
@@ -4228,14 +4242,20 @@
 
     function renderTeacherSelectionDesktopSummary(periods) {
       const selectedByPeriod = new Map(Object.values(selectionRecords)
-        .filter(record => record && String(record.classCode) === String(teacherClassCode) && /^p[1-3]$/.test(String(record.periodKey || '')))
+        .filter(record => record
+          && String(record.classCode) === String(teacherClassCode)
+          && /^p[1-3]$/.test(String(record.periodKey || ''))
+          && !isFixedTeacherOrientationPeriod(record.classCode, String(record.periodKey || '')))
         .map(record => [String(record.periodKey), record]));
       const summaryItems = periods.map((period) => {
+        const isFixedOrientation = isFixedTeacherOrientationPeriod(teacherClassCode, period.key);
         const selection = selectedByPeriod.get(period.key);
-        const selectionText = selection
+        const selectionText = isFixedOrientation
+          ? getFixedTeacherOrientationLabel()
+          : (selection
           ? `書箱${escapePrintText(selection.bookCode)}號《${escapePrintText(sanitizeTitle(selection.bookTitle))}》`
-          : '尚未選擇';
-        return `<div class="desktop-selection-summary-item"><div class="desktop-selection-summary-date">${escapePrintText(getSelectionPeriodLabel(period))}</div><div class="desktop-selection-summary-value ${selection ? 'is-selected' : 'is-pending'}">${selectionText}</div></div>`;
+          : '尚未選擇');
+        return `<div class="desktop-selection-summary-item"><div class="desktop-selection-summary-date">${escapePrintText(getSelectionPeriodLabel(period))}</div><div class="desktop-selection-summary-value ${selection || isFixedOrientation ? 'is-selected' : 'is-pending'}">${selectionText}</div></div>`;
       }).join('');
       return `<div class="desktop-selection-summary-grid">${summaryItems}</div>`;
     }
@@ -4249,7 +4269,9 @@
           const periodTitle = escapePrintText(period.label || `第${index + 1}時段`);
           const periodDate = escapePrintText(getSelectionPeriodLabel(period));
           let statusHtml = '';
-          if (!isBookBorrowable(book)) {
+          if (isFixedTeacherOrientationPeriod(teacherClassCode, period.key)) {
+            statusHtml = '';
+          } else if (!isBookBorrowable(book)) {
             statusHtml = '<span class="text-sm font-bold text-[#8A9A91]">本書箱目前不可選</span>';
           } else if (!period.start || !period.end) {
             statusHtml = '<span class="text-sm font-extrabold text-[#8C5A3C]">時段未設定</span>';
@@ -4270,17 +4292,23 @@
         return `<article class="selection-mobile-card"><header class="selection-mobile-card-header bg-[#F5EFEA] px-4 py-3"><h3 class="selection-mobile-card-title text-lg font-extrabold leading-snug text-[#2C3E35]">《${bookTitle}》</h3><div class="selection-mobile-card-summary text-sm font-extrabold text-[#8C5A3C]">${bookSummary}</div></header>${periodRows}</article>`;
       }).join('');
       const selectedByPeriod = new Map(Object.values(selectionRecords)
-        .filter(record => record && String(record.classCode) === String(teacherClassCode) && /^p[1-3]$/.test(String(record.periodKey || '')))
+        .filter(record => record
+          && String(record.classCode) === String(teacherClassCode)
+          && /^p[1-3]$/.test(String(record.periodKey || ''))
+          && !isFixedTeacherOrientationPeriod(record.classCode, String(record.periodKey || '')))
         .map(record => [String(record.periodKey), record]));
       const summaryDates = periods.map(period => {
         return `<div class="selection-mobile-summary-date">${escapePrintText(getSelectionPeriodLabel(period))}</div>`;
       }).join('');
       const summaryValues = periods.map((period) => {
+        const isFixedOrientation = isFixedTeacherOrientationPeriod(teacherClassCode, period.key);
         const selection = selectedByPeriod.get(period.key);
-        const selectionText = selection
+        const selectionText = isFixedOrientation
+          ? '<span class="selection-mobile-summary-book-title">參觀圖書館＆新生齊步走</span>'
+          : (selection
           ? `<span class="selection-mobile-summary-book-code">書箱${escapePrintText(selection.bookCode)}號</span><br><span class="selection-mobile-summary-book-title">《${escapePrintText(sanitizeTitle(selection.bookTitle))}》</span>`
-          : '尚未選擇';
-        return `<div class="selection-mobile-summary-value ${selection ? '' : 'text-[#8A9A91]'}">${selectionText}</div>`;
+          : '尚未選擇');
+        return `<div class="selection-mobile-summary-value ${selection || isFixedOrientation ? '' : 'text-[#8A9A91]'}">${selectionText}</div>`;
       }).join('');
       const selectionSummaryHtml = `<section class="selection-mobile-summary" aria-label="${escapePrintText(teacherClassCode)}班3個時段選書摘要"><div class="selection-mobile-summary-grid">${summaryDates}${summaryValues}</div></section>`;
       return `${cardsHtml}${selectionSummaryHtml}`;
@@ -4293,6 +4321,10 @@
       }
       if (!teacherClassCode || !/^\d{3}$/.test(teacherClassCode)) {
         alert('請先確認三位數班級代碼。');
+        return;
+      }
+      if (isFixedTeacherOrientationPeriod(teacherClassCode, periodKey)) {
+        alert('七年級第一學期第一次書箱不開放選書。');
         return;
       }
       if (!currentUser || !cloudReady) {
@@ -4387,6 +4419,10 @@
         return;
       }
       if (!teacherClassCode || !/^\d{3}$/.test(teacherClassCode) || !currentUser) return;
+      if (isFixedTeacherOrientationPeriod(teacherClassCode, periodKey)) {
+        alert('七年級第一學期第一次書箱沒有可取消的教師選書。');
+        return;
+      }
       const selectionId = getSelectionId(bookCode, periodKey);
       const selection = selectionRecords[selectionId];
       if (!selection
@@ -5013,7 +5049,11 @@
       const managedClasses = new Set([...getClassesForGrade('7'), ...getClassesForGrade('8')]);
       const eligibleBookCodes = new Set(booksData.filter(isBookEligibleForRotation).map(book => String(book.code).trim()));
       const rawTeacherSelections = Object.values(selectionRecords).filter(item =>
-        item && managedClasses.has(String(item.classCode)) && /^p[1-3]$/.test(String(item.periodKey || '')) && String(item.bookCode || '').trim()
+        item
+          && managedClasses.has(String(item.classCode))
+          && /^p[1-3]$/.test(String(item.periodKey || ''))
+          && !isFixedTeacherOrientationPeriod(item.classCode, String(item.periodKey || ''))
+          && String(item.bookCode || '').trim()
       );
       const teacherSelections = rawTeacherSelections.filter(item => eligibleBookCodes.has(String(item.bookCode).trim()));
       let skippedCount = rawTeacherSelections.length - teacherSelections.length;
